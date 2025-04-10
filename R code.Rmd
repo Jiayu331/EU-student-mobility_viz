@@ -1,0 +1,288 @@
+---
+title: "R code"
+author: "Jiayu"
+date: "2025-03-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+library(tidyverse)
+library(tidylog)
+library(janitor)
+library(lubridate)
+library(gtsummary)
+library(ggridges)
+library(scales)
+library(showtext)
+library(readr)
+```
+```{r}
+library(ggrepel)
+```
+```{r}
+library(ggsci)
+```
+```{r}
+library(ggthemes)
+```
+```{r}
+library(RColorBrewer)
+```
+```{r}
+erasmus <- read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2022/2022-03-08/erasmus.csv')
+```
+#data wrangling
+```{r}
+remove(data_china, data_hk)
+
+clean_data <- erasmus |>
+  select(academic_year, sending_country_code, receiving_country_code, participants) |>
+  clean_names() |>
+  drop_na()
+
+glimpse(clean_data)
+```
+```{r}
+total_sending_data <- clean_data |>
+  group_by(sending_country_code) |>
+  summarize(total_sending = sum(participants)) |>
+  rename(country_code = sending_country_code)
+
+total_receiving_data <- clean_data |>
+  group_by(receiving_country_code) |>
+  summarize(total_receiving = sum(participants)) |>
+  rename(country_code = receiving_country_code)
+
+```
+```{r}
+sending_by_year <- clean_data |>
+  group_by(academic_year, sending_country_code) |>
+  summarize(sending = sum(participants)) |>
+  rename(country_code = sending_country_code) |>
+  ungroup()
+
+receiving_by_year <- clean_data |>
+  group_by(academic_year, receiving_country_code) |>
+  summarize(receiving = sum(participants)) |>
+  rename(country_code = receiving_country_code) |>
+  ungroup()
+```
+```{r}
+by_country <- full_join(total_receiving_data, total_sending_data, by = "country_code") |>
+  mutate(across(everything(), ~ replace(., is.na(.),0)))
+
+by_country
+```
+```{r}
+by_year <- full_join(receiving_by_year, sending_by_year, by = c("country_code", "academic_year")) |>
+  mutate(across(everything(), ~ replace(., is.na(.),0)))
+
+by_year
+```
+```{r}
+by_country$country_name <- countrycode(by_country$country_code, "iso2c", "country.name")
+
+by_country <- by_country |>
+  mutate(country_name = case_when(country_code == "EL" ~ "Greece",
+                                  country_code == "UK" ~ "United Kingdom",
+                                  country_code == "XK" ~ "Kosovo",
+                                  TRUE ~ country_name))
+```
+```{r}
+by_year
+```
+
+```{r}
+by_year$country_name <- countrycode(by_year$country_code, "iso2c", "country.name")
+```
+```{r}
+by_year <- by_year |>
+  mutate(country_name = as.character(country_name)) |>
+  mutate(country_name = case_when(
+    country_code == "EL" ~ "Greece",
+    country_code == "UK" ~ "United Kingdom",
+    country_code == "XK" ~ "Kosovo",
+    TRUE ~ country_name))
+```
+
+#EU population
+```{r}
+EU_population <- read_csv("eu_population.csv")
+```
+```{r}
+population_data <- EU_population |>
+  select(geo, TIME_PERIOD, OBS_VALUE) |>
+  rename(country_name = geo, year = TIME_PERIOD, population = OBS_VALUE) |>
+  filter(year == "2015") 
+
+population_data
+```
+```{r}
+by_country <- by_country |>
+  arrange(country_name)
+by_year <- by_year |>
+  arrange(country_name)
+population_data |>
+  arrange(country_name)
+```
+```{r}
+missing_population <- setdiff(by_country$country_name, population_data$country_name)
+
+print(missing_population)
+```
+```{r}
+population_data <- population_data |>
+  select(-year)
+```
+```{r}
+by_country <- full_join(population_data, by_country, by="country_name")
+```
+```{r}
+by_country <- by_country |>
+  drop_na()
+```
+
+#plotting
+```{r}
+plot_country <- by_country |>
+  filter(total_receiving != 0) |>
+  filter(total_sending != 0) |>
+  filter(country_name != "Poland") |>
+  filter(country_name != "Germany") |>
+  ggplot(aes(x=total_receiving, y=total_sending, size=population, color=country_name)) +
+  geom_point() +
+  scale_color_manual(values = my_colors) +
+  geom_text_repel(aes(label=country_name), box.padding = 0.5, max.overlaps = 20, size = 3, segment.color = NA) +
+  scale_size_continuous(range = c(3,15)) +
+  scale_x_continuous(breaks = seq(0, 30000, by = 10000)) +
+  scale_y_continuous(breaks = seq(0, 30000, by = 10000)) +
+  labs(title = "Esramus Student Mobility by Country",
+       subtitle = str_wrap("This is an overview of the number of students sending and receiving by each country under Esramus programme during 2014 and 2016. The size of point is proportional to the population of the country in year 2015. We can see from the plot that countries who sent more student tended to receive more students, indicating higher engagement in the program.", width = 165),
+       x = "Total number of students received",
+       y = "Total number of students sent") +
+  theme_bw() +
+  theme(legend.position = "none",
+        plot.title = element_text(size=24, face = "bold", margin = margin(10, 0, 10, 0)),
+        plot.subtitle = element_text(size=16, margin = margin(0, 0, 20, 0)),
+        axis.title = element_text(size=14))
+
+print(plot_country)
+```
+```{r}
+by_year_long <- by_year |>
+  gather(key = "mobility_type", value = "students", sending, receiving) |>
+  mutate(mobility_type = factor(mobility_type, levels = c("sending", "receiving")))
+```
+```{r}
+by_year_long <- by_year_long |>
+  group_by(academic_year, mobility_type) |>
+  summarise(students = sum(students))
+
+by_year_long
+```
+```{r}
+plot_year <- by_year_long |>
+  filter(students >= 100) |>
+  ggplot(aes(x=academic_year, y=students, fill=mobility_type)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~country_name, ncol=6) +
+  scale_fill_manual(values=c("sending"="skyblue", "receiving"="orange")) +
+  theme_solarized()
+
+print(plot_year)
+```
+
+```{r}
+countries_full <- by_year |>
+  filter(sending != 0) |>
+  filter(receiving != 0) |>
+  group_by(country_name) |>
+  summarize(n_years = n_distinct(academic_year)) |>
+  filter(n_years==6) |>
+  pull(country_name)
+
+by_year_filtered <- by_year |>
+  filter(country_name %in% countries_full)
+```
+```{r}
+top_countries <- by_year_filtered %>%
+  group_by(country_name) %>%
+  summarize(total_students = sum(sending)) %>%
+  top_n(10, total_students) %>%
+  pull(country_name)
+
+by_year_filtered <- by_year_filtered %>%
+  filter(country_name %in% top_countries)
+```
+```{r}
+last_year <-
+  by_year_filtered |>
+  filter(academic_year == "2019-2020") |>
+  arrange(desc(country_name)) |>
+  mutate(cumulative_position = cumsum(sending)) |>
+  select(academic_year, country_name, cumulative_position)
+```
+```{r}
+
+my_colors <- c(brewer.pal(9, "Pastel1"),
+               brewer.pal(8, "Pastel2"),
+               brewer.pal(12, "Set3"),
+               brewer.pal(8, "Set2")) 
+```
+```{r}
+plot_year_stacked <-
+  ggplot(by_year_filtered, aes(x=academic_year, y=sending, fill=country_name)) +
+  geom_area(aes(group = country_name)) +
+  scale_x_discrete() +
+  scale_fill_brewer(palette = "Set3") +
+  geom_text_repel(data = last_year,
+                  aes(label=country_name,
+                      y=cumulative_position),
+                  box.padding = 0.5,
+                  max.overlaps = 50,
+                  hjust = -0.1,
+                  direction = "y",
+                  size = 3,
+                  segment.color = NA) +
+  scale_x_discrete(expand = c(0,0.2)) +
+  theme_minimal() +
+  labs(title = "Esramus Programme Student Mobility",
+       subtitle = str_wrap("This plot shows the cumulative number of students that went for exchange through EU's Esramus programmes during 2014 and 2020. Note that the plot only captures the top ten countries in terms of exchange students number. The exchange period varies from one day to over one year.", width = 80),
+       x = "Academic Year", y = "Number of Students") +
+  theme(plot.title = element_text(size=20, face="bold", margin = margin(5, 5, 10, 5), color = "purple"),
+        plot.subtitle = element_text(size=16, margin = margin(5,5,15,5)),
+        legend.position = "none")
+        
+print(plot_year_stacked)
+```
+```{r}
+ggsave("Esramus student mobility by country.pdf", plot = plot_country, height = 10, width = 12)
+ggsave("Esramus student mobility by year.pdf", plot = plot_year_stacked, height = 10, width = 18)
+```
+
+
+
+
